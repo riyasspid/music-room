@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.music_room"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

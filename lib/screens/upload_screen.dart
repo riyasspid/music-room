@@ -17,7 +17,7 @@ class _UploadScreenState extends State<UploadScreen> {
   String _uploadStatus = '';
 
   Future<void> _pickAndUpload() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
+    FilePickerResult? result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma'],
       withData: kIsWeb, // Needed for web support, but avoid on mobile to prevent OOM

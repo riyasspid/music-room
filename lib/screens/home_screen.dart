@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'room_screen.dart';
 import 'upload_screen.dart';
+import 'library_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -63,14 +64,31 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Colors.black,
-        icon: const Icon(Icons.cloud_upload_rounded),
-        label: const Text('Upload', style: TextStyle(fontWeight: FontWeight.bold)),
-        onPressed: () {
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const UploadScreen()));
-        },
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton(
+            heroTag: 'library_btn',
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            foregroundColor: Colors.white,
+            shape: const CircleBorder(),
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const LibraryScreen()));
+            },
+            child: const Icon(Icons.library_music_rounded),
+          ),
+          const SizedBox(width: 16),
+          FloatingActionButton(
+            heroTag: 'upload_btn',
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Colors.black,
+            shape: const CircleBorder(),
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const UploadScreen()));
+            },
+            child: const Icon(Icons.cloud_upload_rounded),
+          ),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(

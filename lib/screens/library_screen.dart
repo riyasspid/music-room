@@ -1,69 +1,41 @@
-import 'dart:async';
 import 'dart:ui';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart'; // Added for kIsWeb
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
-import 'upload_screen.dart';
 
-class RoomScreen extends StatefulWidget {
-  final String roomId;
-  const RoomScreen({super.key, required this.roomId});
+class LibraryScreen extends StatefulWidget {
+  const LibraryScreen({super.key});
 
   @override
-  State<RoomScreen> createState() => _RoomScreenState();
+  State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _RoomScreenState extends State<RoomScreen> {
+class _LibraryScreenState extends State<LibraryScreen> {
   final AudioPlayer _player = AudioPlayer();
   final _supabase = Supabase.instance.client;
   
   List<dynamic> _songs = [];
   bool _isLoadingSongs = true;
-  
-  // Realtime subscription
-  RealtimeChannel? _roomSubscription;
-  
-  // Local state
-  String? _currentSongId;
-  bool _isPlaying = false;
-  Duration _position = Duration.zero;
   String _searchQuery = '';
   
-  // Queue & Autoplay
-  bool _isAutoPlay = true;
+  String? _currentSongId;
+  bool _isPlaying = false;
+
   final List<Map<String, dynamic>> _queue = [];
-  bool _handlingCompletion = false;
-
-  // Prevent recursive syncing
-  bool _isSyncingFromRemote = false;
   ConcatenatingAudioSource? _playlist;
-
-  AudioSource _createAudioSource(Map<String, dynamic> song) {
-    final uri = Uri.parse(song['url']);
-    final tag = MediaItem(id: song['id'], album: 'Music Room', title: song['title']);
-    // Web automatically caches via browser HTTP cache. Non-web explicitly caches via LockCachingAudioSource.
-    if (kIsWeb) {
-      return AudioSource.uri(uri, tag: tag);
-    } else {
-      return LockCachingAudioSource(uri, tag: tag);
-    }
-  }
-
+  
   @override
   void initState() {
     super.initState();
     _fetchSongs();
     _setupAudioListeners();
-    _subscribeToRoom();
   }
 
   @override
   void dispose() {
-    _roomSubscription?.unsubscribe();
     _player.dispose();
     super.dispose();
   }
@@ -71,10 +43,12 @@ class _RoomScreenState extends State<RoomScreen> {
   Future<void> _fetchSongs() async {
     try {
       final data = await _supabase.from('songs').select().order('created_at');
-      setState(() {
-        _songs = data;
-        _isLoadingSongs = false;
-      });
+      if (mounted) {
+        setState(() {
+          _songs = data;
+          _isLoadingSongs = false;
+        });
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error loading songs: $e')));
@@ -87,14 +61,10 @@ class _RoomScreenState extends State<RoomScreen> {
       if (mounted) {
         setState(() => _isPlaying = state.playing);
       }
-      
-      if (state.processingState == ProcessingState.completed) {
-        _handleSongCompletion();
-      }
     });
 
     _player.currentIndexStream.listen((index) async {
-      if (index != null && index > 0 && _playlist != null && !_isSyncingFromRemote) {
+      if (index != null && index > 0 && _playlist != null) {
         if (index < _playlist!.children.length) {
           final currentSource = _playlist!.children[index] as UriAudioSource;
           final nextMediaItem = currentSource.tag as MediaItem;
@@ -108,166 +78,22 @@ class _RoomScreenState extends State<RoomScreen> {
               }
             });
           }
-          
-          _updateRoomState(songId: newSongId, isPlaying: true, position: Duration.zero);
-          
-          await _playlist!.removeAt(0);
-          
-          Map<String, dynamic>? upcomingSong;
-          if (_queue.isNotEmpty) {
-            upcomingSong = _queue[0];
-          } else if (_isAutoPlay && _songs.isNotEmpty) {
-            final cIdx = _songs.indexWhere((s) => s['id'] == newSongId);
-            if (cIdx != -1 && cIdx + 1 < _songs.length) {
-              upcomingSong = _songs[cIdx + 1];
-            } else if (_songs.isNotEmpty) {
-              upcomingSong = _songs[0];
-            }
-          }
-          
-          if (upcomingSong != null) {
-            await _playlist!.add(_createAudioSource(upcomingSong));
-          }
         }
       }
     });
-
-    _player.positionStream.listen((pos) {
-      // We don't broadcast position on every tick to avoid spamming the DB,
-      // but we could sync occasionally or when scrubbing.
-      _position = pos;
-    });
   }
 
-  Future<void> _handleSongCompletion() async {
-    if (_handlingCompletion) return;
-    _handlingCompletion = true;
-    
-    try {
-      await _updateRoomState(isPlaying: false, position: Duration.zero);
-    } finally {
-      // Debounce completion logic
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) {
-          _handlingCompletion = false;
-        }
-      });
+  AudioSource _createAudioSource(Map<String, dynamic> song) {
+    final uri = Uri.parse(song['url']);
+    final tag = MediaItem(id: song['id'], album: 'Library', title: song['title'], artist: song['artist'] ?? 'Unknown');
+    if (kIsWeb) {
+      return AudioSource.uri(uri, tag: tag);
+    } else {
+      return LockCachingAudioSource(uri, tag: tag);
     }
   }
 
-  Future<void> _subscribeToRoom() async {
-    _roomSubscription = _supabase.channel('public:rooms:id=eq.${widget.roomId}')
-      .onPostgresChanges(
-        event: PostgresChangeEvent.update,
-        schema: 'public',
-        table: 'rooms',
-        filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'id', value: widget.roomId),
-        callback: (payload) {
-          _handleRemoteUpdate(payload.newRecord);
-        }
-      )
-      .subscribe();
-      
-    // Initial fetch
-    final data = await _supabase.from('rooms').select().eq('id', widget.roomId).single();
-    _handleRemoteUpdate(data);
-  }
-
-  Future<void> _handleRemoteUpdate(Map<String, dynamic> data) async {
-    _isSyncingFromRemote = true;
-    
-    final remoteSongId = data['current_song_id'] as String?;
-    final remoteIsPlaying = data['is_playing'] as bool? ?? false;
-    final remotePosition = Duration(milliseconds: data['position_ms'] as int? ?? 0);
-    
-    if (remoteSongId != null && remoteSongId != _currentSongId) {
-      // Song changed
-      setState(() {
-        _currentSongId = remoteSongId;
-        _isPlaying = remoteIsPlaying;
-      });
-      
-      final song = _songs.firstWhere((s) => s['id'] == remoteSongId, orElse: () => null);
-      if (song != null) {
-        try {
-          final sources = <AudioSource>[];
-          sources.add(_createAudioSource(song));
-          
-          Map<String, dynamic>? nextSong;
-          if (_queue.isNotEmpty) {
-            nextSong = _queue[0];
-          } else if (_isAutoPlay && _songs.isNotEmpty) {
-            final cIdx = _songs.indexWhere((s) => s['id'] == song['id']);
-            if (cIdx != -1 && cIdx + 1 < _songs.length) {
-              nextSong = _songs[cIdx + 1];
-            } else if (_songs.isNotEmpty) {
-              nextSong = _songs[0];
-            }
-          }
-          if (nextSong != null) {
-            sources.add(_createAudioSource(nextSong));
-          }
-          
-          _playlist = ConcatenatingAudioSource(children: sources);
-          
-          // Do not await to allow immediate command queuing
-          // _player.stop().catchError((_) {}); // Removed to maintain background audio service session
-          await _player.setAudioSource(_playlist!).catchError((e) {
-            debugPrint('Error setting remote source: $e');
-          });
-          
-          _player.seek(remotePosition);
-          
-          if (remoteIsPlaying) {
-            _player.play().catchError((e) {
-              debugPrint('Autoplay blocked: $e');
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Tap Play to sync audio (browser blocked autoplay)')),
-                );
-              }
-            });
-          }
-        } catch (e) {
-          debugPrint('Error switching remote song: $e');
-        }
-      }
-    } else if (remoteSongId != null) {
-      // Same song, just sync state
-      final drift = (remotePosition - _player.position).inMilliseconds.abs();
-      if (drift > 2000) {
-        _player.seek(remotePosition);
-      }
-      
-      setState(() => _isPlaying = remoteIsPlaying);
-      if (remoteIsPlaying) {
-        if (!_player.playing) _player.play().catchError((_) {});
-      } else {
-        if (_player.playing) _player.pause();
-      }
-    }
-
-    _isSyncingFromRemote = false;
-  }
-
-  Future<void> _updateRoomState({String? songId, required bool isPlaying, required Duration position}) async {
-    try {
-      await _supabase.from('rooms').update({
-        if (songId != null) 'current_song_id': songId,
-        'is_playing': isPlaying,
-        'position_ms': position.inMilliseconds,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', widget.roomId);
-    } catch (e) {
-      debugPrint('Error updating room state: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync Error: $e')));
-      }
-    }
-  }
-  
   Future<void> _playSong(Map<String, dynamic> song) async {
-    // Play locally immediately to satisfy browser interaction policies
     setState(() {
       _currentSongId = song['id'];
       _isPlaying = true;
@@ -275,52 +101,50 @@ class _RoomScreenState extends State<RoomScreen> {
     
     try {
       final sources = <AudioSource>[];
+      
+      // 1. Add current song
       sources.add(_createAudioSource(song));
       
-      Map<String, dynamic>? nextSong;
-      if (_queue.isNotEmpty) {
-        nextSong = _queue[0];
-      } else if (_isAutoPlay && _songs.isNotEmpty) {
+      // 2. Add existing queue
+      for (var qSong in _queue) {
+        sources.add(_createAudioSource(qSong));
+      }
+      
+      // 3. Add remaining library songs for continuous playback
+      if (_songs.isNotEmpty) {
         final cIdx = _songs.indexWhere((s) => s['id'] == song['id']);
-        if (cIdx != -1 && cIdx + 1 < _songs.length) {
-          nextSong = _songs[cIdx + 1];
-        } else if (_songs.isNotEmpty) {
-          nextSong = _songs[0];
+        if (cIdx != -1) {
+          for (int i = cIdx + 1; i < _songs.length; i++) {
+            sources.add(_createAudioSource(_songs[i]));
+          }
         }
       }
       
-      if (nextSong != null) {
-        sources.add(_createAudioSource(nextSong));
-      }
-      
       _playlist = ConcatenatingAudioSource(children: sources);
-      // await _player.stop(); // Removed to maintain background audio service session      
       await _player.setAudioSource(_playlist!);
       
       _player.play().catchError((e) {
         debugPrint('Autoplay blocked during song switch: $e');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Tap Play to start audio (browser blocked autoplay)')),
-          );
-        }
       });
     } catch (e) {
       debugPrint('Error loading audio source: $e');
     }
-
-    // Broadcast to room
-    await _updateRoomState(
-      songId: song['id'], 
-      isPlaying: true, 
-      position: Duration.zero
-    );
   }
 
   void _addToQueue(Map<String, dynamic> song) {
     setState(() {
       _queue.add(song);
     });
+    
+    // If a playlist is active, insert the song dynamically
+    if (_playlist != null && _player.currentIndex != null) {
+      // Insert after current song + existing queue items
+      final insertIndex = _player.currentIndex! + _queue.length;
+      if (insertIndex <= _playlist!.children.length) {
+        _playlist!.insert(insertIndex, _createAudioSource(song));
+      }
+    }
+    
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('${song['title']} added to queue')),
     );
@@ -449,7 +273,7 @@ class _RoomScreenState extends State<RoomScreen> {
 
   Future<void> _deleteSong(Map<String, dynamic> song) async {
     try {
-      // 1. Clear foreign key references in rooms table to prevent PostgreSQL errors
+      // 1. Clear foreign key references in rooms table just in case
       await _supabase.from('rooms').update({'current_song_id': null}).eq('current_song_id', song['id']);
       
       // 2. Delete from database
@@ -458,14 +282,6 @@ class _RoomScreenState extends State<RoomScreen> {
       // 3. Delete from storage
       final path = Uri.parse(song['url']).pathSegments.last;
       await _supabase.storage.from('songs').remove([path]);
-      
-      // If it's the current song being played, stop it
-      if (_currentSongId == song['id']) {
-        await _player.stop();
-        _currentSongId = null;
-        setState(() => _isPlaying = false);
-        _updateRoomState(isPlaying: false, position: Duration.zero);
-      }
       
       // Refresh list
       _fetchSongs();
@@ -481,6 +297,10 @@ class _RoomScreenState extends State<RoomScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final filteredSongs = _searchQuery.isEmpty 
+        ? _songs 
+        : _songs.where((s) => s['title'].toString().toLowerCase().contains(_searchQuery)).toList();
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
@@ -491,20 +311,8 @@ class _RoomScreenState extends State<RoomScreen> {
             child: AppBar(
               backgroundColor: const Color(0xFF09090E).withOpacity(0.5),
               elevation: 0,
-              title: Text('ROOM: ${widget.roomId}', style: const TextStyle(letterSpacing: 1.5, fontWeight: FontWeight.bold, fontSize: 16)),
+              title: const Text('LIBRARY', style: TextStyle(letterSpacing: 1.5, fontWeight: FontWeight.bold, fontSize: 16)),
               centerTitle: true,
-              actions: [
-
-                IconButton(
-                  icon: const Icon(Icons.copy_rounded, size: 20),
-                  tooltip: 'Copy Room ID',
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: widget.roomId));
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Room ID copied')));
-                  },
-                ),
-                const SizedBox(width: 8),
-              ],
             ),
           ),
         ),
@@ -543,127 +351,108 @@ class _RoomScreenState extends State<RoomScreen> {
               Expanded(
                 child: _isLoadingSongs
                   ? const Center(child: CircularProgressIndicator())
-                  : _songs.isEmpty
+                  : filteredSongs.isEmpty
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.music_note_rounded, size: 64, color: Colors.white.withOpacity(0.2)),
+                              Icon(Icons.library_music_rounded, size: 64, color: Colors.white.withOpacity(0.2)),
                               const SizedBox(height: 16),
-                              Text('No songs in the room yet.', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+                              Text('No songs found.', style: TextStyle(color: Colors.white.withOpacity(0.5))),
                             ],
                           ),
                         )
-                      : Builder(
-                          builder: (context) {
-                            final filteredSongs = _searchQuery.isEmpty 
-                                ? _songs 
-                                : _songs.where((s) => s['title'].toString().toLowerCase().contains(_searchQuery)).toList();
-                            
-                            if (filteredSongs.isEmpty) {
-                              return const Center(child: Text('No songs match your search.', style: TextStyle(color: Colors.white54)));
-                            }
-                            
-                            return ListView.builder(
-                              padding: const EdgeInsets.only(bottom: 24, top: 8),
-                              itemCount: filteredSongs.length,
-                              itemBuilder: (context, index) {
-                                final song = filteredSongs[index];
-                                final isCurrent = song['id'] == _currentSongId;
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 300),
-                                    decoration: BoxDecoration(
-                                      color: isCurrent ? Theme.of(context).colorScheme.primary.withOpacity(0.1) : Colors.white.withOpacity(0.03),
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: isCurrent ? Theme.of(context).colorScheme.primary.withOpacity(0.3) : Colors.transparent,
+                      : ListView.builder(
+                          padding: const EdgeInsets.only(bottom: 24, top: 8),
+                          itemCount: filteredSongs.length,
+                          itemBuilder: (context, index) {
+                            final song = filteredSongs[index];
+                            final isCurrent = song['id'] == _currentSongId;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 300),
+                                decoration: BoxDecoration(
+                                  color: isCurrent ? Theme.of(context).colorScheme.primary.withOpacity(0.1) : Colors.white.withOpacity(0.03),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: isCurrent ? Theme.of(context).colorScheme.primary.withOpacity(0.3) : Colors.transparent,
+                                  ),
+                                ),
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                    leading: CircleAvatar(
+                                      backgroundColor: isCurrent ? Theme.of(context).colorScheme.primary : Colors.white10,
+                                      child: Icon(
+                                        isCurrent ? Icons.graphic_eq_rounded : Icons.music_note_rounded,
+                                        color: isCurrent ? Colors.black : Colors.white54,
                                       ),
                                     ),
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: ListTile(
-                                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                      leading: CircleAvatar(
-                                        backgroundColor: isCurrent ? Theme.of(context).colorScheme.primary : Colors.white10,
-                                        child: Icon(
-                                          isCurrent ? Icons.graphic_eq_rounded : Icons.music_note_rounded,
-                                          color: isCurrent ? Colors.black : Colors.white54,
-                                        ),
-                                      ),
-                                      title: Text(
-                                        song['title'], 
-                                        maxLines: 1, 
-                                        overflow: TextOverflow.ellipsis, 
-                                        style: TextStyle(
-                                          color: isCurrent ? Colors.white : Colors.white70,
-                                          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                                        )
-                                      ),
-                                      trailing: PopupMenuButton<String>(
-                                        icon: const Icon(Icons.more_vert_rounded, color: Colors.white54),
-                                        color: const Color(0xFF14142B),
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                        onSelected: (value) {
-                                          if (value == 'delete') {
-                                            _deleteSong(song);
-                                          } else if (value == 'queue') {
-                                            _addToQueue(song);
-                                          }
-                                        },
-                                        itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                                          const PopupMenuItem<String>(
-                                            value: 'queue',
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.queue_music_rounded, color: Colors.white70, size: 20),
-                                                SizedBox(width: 12),
-                                                Text('Add to Queue'),
-                                              ],
-                                            ),
-                                          ),
-                                          const PopupMenuItem<String>(
-                                            value: 'delete',
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.delete_rounded, color: Colors.redAccent, size: 20),
-                                                SizedBox(width: 12),
-                                                Text('Delete', style: TextStyle(color: Colors.redAccent)),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      onTap: () {
-                                        if (isCurrent) {
-                                          final newIsPlaying = !_isPlaying;
-                                          if (newIsPlaying) {
-                                            _player.play();
-                                          } else {
-                                            _player.pause();
-                                          }
-                                          setState(() => _isPlaying = newIsPlaying);
-                                          _updateRoomState(
-                                            isPlaying: newIsPlaying,
-                                            position: _player.position,
-                                          );
-                                        } else {
-                                          _playSong(song);
+                                    title: Text(
+                                      song['title'], 
+                                      maxLines: 1, 
+                                      overflow: TextOverflow.ellipsis, 
+                                      style: TextStyle(
+                                        color: isCurrent ? Colors.white : Colors.white70,
+                                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                      )
+                                    ),
+                                    trailing: PopupMenuButton<String>(
+                                      icon: const Icon(Icons.more_vert_rounded, color: Colors.white54),
+                                      color: const Color(0xFF14142B),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                      onSelected: (value) {
+                                        if (value == 'delete') {
+                                          _deleteSong(song);
+                                        } else if (value == 'queue') {
+                                          _addToQueue(song);
                                         }
                                       },
+                                      itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                                        const PopupMenuItem<String>(
+                                          value: 'queue',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.queue_music_rounded, color: Colors.white70, size: 20),
+                                              SizedBox(width: 12),
+                                              Text('Add to Queue'),
+                                            ],
+                                          ),
+                                        ),
+                                        const PopupMenuItem<String>(
+                                          value: 'delete',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.delete_rounded, color: Colors.redAccent, size: 20),
+                                              SizedBox(width: 12),
+                                              Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
                                     ),
+                                    onTap: () {
+                                      if (isCurrent) {
+                                        if (_isPlaying) {
+                                          _player.pause();
+                                        } else {
+                                          _player.play();
+                                        }
+                                      } else {
+                                        _playSong(song as Map<String, dynamic>);
+                                      }
+                                    },
                                   ),
-                                  ),
-                                );
-                              },
+                                ),
+                              ),
                             );
-                          }
+                          },
                         ),
               ),
               
-              // Glassmorphism Playback controls
-              // Premium Playback controls
+              // Bottom playback panel
               if (_currentSongId != null)
                 Builder(
                   builder: (context) {
@@ -751,7 +540,6 @@ class _RoomScreenState extends State<RoomScreen> {
                                         onChanged: (val) {
                                           final newPos = Duration(seconds: val.toInt());
                                           _player.seek(newPos);
-                                          _updateRoomState(isPlaying: _isPlaying, position: newPos);
                                         },
                                       ),
                                     ),
@@ -766,34 +554,44 @@ class _RoomScreenState extends State<RoomScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               const SizedBox(width: 48), // Spacer
-                              Container(
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Color(0xFF1DB954),
-                                ),
-                                child: IconButton(
-                                  iconSize: 40,
-                                  padding: const EdgeInsets.all(12),
-                                  icon: Icon(
-                                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, 
-                                    color: const Color(0xFF171717),
+                              Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.skip_previous_rounded, color: Colors.white, size: 36),
+                                    onPressed: () {
+                                      _player.seekToPrevious();
+                                    },
                                   ),
-                                  onPressed: () {
-                                    final newIsPlaying = !_isPlaying;
-                                    setState(() => _isPlaying = newIsPlaying);
-                                    
-                                    if (newIsPlaying) {
-                                      _player.play();
-                                    } else {
-                                      _player.pause();
-                                    }
-                                    
-                                    _updateRoomState(
-                                      isPlaying: newIsPlaying,
-                                      position: _player.position,
-                                    );
-                                  },
-                                ),
+                                  const SizedBox(width: 16),
+                                  Container(
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Color(0xFF1DB954),
+                                    ),
+                                    child: IconButton(
+                                      iconSize: 40,
+                                      padding: const EdgeInsets.all(12),
+                                      icon: Icon(
+                                        _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, 
+                                        color: const Color(0xFF171717),
+                                      ),
+                                      onPressed: () {
+                                        if (_isPlaying) {
+                                          _player.pause();
+                                        } else {
+                                          _player.play();
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  IconButton(
+                                    icon: const Icon(Icons.skip_next_rounded, color: Colors.white, size: 36),
+                                    onPressed: () {
+                                      _player.seekToNext();
+                                    },
+                                  ),
+                                ],
                               ),
                               IconButton(
                                 icon: const Icon(Icons.queue_music_rounded, color: Color(0xFFA6A6A6)),
