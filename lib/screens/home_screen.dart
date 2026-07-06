@@ -103,15 +103,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   // Hero Icon
                   Container(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Theme.of(context).colorScheme.surface,
                     ),
-                    child: Icon(
-                      Icons.headphones_rounded,
-                      size: 80,
-                      color: Theme.of(context).colorScheme.primary,
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/logo.png',
+                        width: 96,
+                        height: 96,
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 48),
