@@ -74,15 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color(0xFF09090E),
-              Color(0xFF14142B),
-              Color(0xFF09090E),
-            ],
-          ),
+          color: Color(0xFF171717),
         ),
         child: SafeArea(
           child: Center(
@@ -96,14 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-                          blurRadius: 30,
-                          spreadRadius: 10,
-                        )
-                      ]
+                      color: Theme.of(context).colorScheme.surface,
                     ),
                     child: Icon(
                       Icons.headphones_rounded,

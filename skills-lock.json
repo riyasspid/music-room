@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "spotify-ui-skills": {
+      "source": "ihlamury/design-skills",
+      "sourceType": "github",
+      "skillPath": "skills/spotify/SKILL.md",
+      "computedHash": "c8fa47eb38e5e211f57750eecf1538da9d5a2a0f35efb3cb32acd3b5628b2c37"
+    }
+  }
+}

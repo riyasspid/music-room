@@ -101,6 +101,9 @@ class _RoomScreenState extends State<RoomScreen> {
         if (currentIndex != -1 && currentIndex + 1 < _songs.length) {
           final nextSong = _songs[currentIndex + 1];
           await _playSong(nextSong);
+        } else if (_songs.isNotEmpty) {
+          final nextSong = _songs[0]; // Loop back to the first song
+          await _playSong(nextSong);
         } else {
           await _updateRoomState(isPlaying: false, position: Duration.zero);
         }
@@ -223,20 +226,16 @@ class _RoomScreenState extends State<RoomScreen> {
     });
     
     try {
-      // Do not await these commands. just_audio will queue them.
-      // This ensures play() is called in the same synchronous execution block as the click.
-      _player.stop().catchError((_) {});
+      await _player.stop();
       
-      _player.setAudioSource(AudioSource.uri(
+      await _player.setAudioSource(AudioSource.uri(
         Uri.parse(song['url']),
         tag: MediaItem(
           id: song['id'],
           album: 'Music Room',
           title: song['title'],
         ),
-      )).catchError((e) {
-        debugPrint('Error setting audio source: $e');
-      });
+      ));
       
       _player.play().catchError((e) {
         debugPrint('Autoplay blocked during song switch: $e');
@@ -247,7 +246,7 @@ class _RoomScreenState extends State<RoomScreen> {
         }
       });
     } catch (e) {
-      debugPrint('Caught synchronous error in just_audio: $e');
+      debugPrint('Error loading audio source: $e');
     }
 
     // Broadcast to room
@@ -435,19 +434,7 @@ class _RoomScreenState extends State<RoomScreen> {
               title: Text('ROOM: ${widget.roomId}', style: const TextStyle(letterSpacing: 1.5, fontWeight: FontWeight.bold, fontSize: 16)),
               centerTitle: true,
               actions: [
-                Row(
-                  children: [
-                    const Text('AUTO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white54)),
-                    Switch(
-                      value: _isAutoPlay,
-                      onChanged: (val) {
-                        setState(() => _isAutoPlay = val);
-                      },
-                      activeColor: Theme.of(context).colorScheme.primary,
-                      inactiveTrackColor: Colors.white10,
-                    ),
-                  ],
-                ),
+
                 IconButton(
                   icon: const Icon(Icons.copy_rounded, size: 20),
                   tooltip: 'Copy Room ID',
@@ -464,11 +451,7 @@ class _RoomScreenState extends State<RoomScreen> {
       ),
       body: Container(
         decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF14142B), Color(0xFF09090E)],
-          ),
+          color: Color(0xFF171717),
         ),
         child: SafeArea(
           child: Column(
@@ -617,19 +600,59 @@ class _RoomScreenState extends State<RoomScreen> {
               ),
               
               // Glassmorphism Playback controls
+              // Premium Playback controls
               if (_currentSongId != null)
-                ClipRRect(
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 24.0),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.5),
-                        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+                Builder(
+                  builder: (context) {
+                    final currentSong = _songs.firstWhere(
+                      (s) => s['id'] == _currentSongId, 
+                      orElse: () => <String, dynamic>{},
+                    );
+                    
+                    return Container(
+                      padding: const EdgeInsets.fromLTRB(16.0, 12.0, 16.0, 24.0),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF010002), // Spotify accent/overlay
+                        border: Border(top: BorderSide(color: Color(0xFF282828))),
                       ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (currentSong.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          currentSong['title'] ?? 'Unknown',
+                                          style: const TextStyle(
+                                            color: Color(0xFFFEFEFE),
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        if (currentSong['artist'] != null)
+                                          Text(
+                                            currentSong['artist'],
+                                            style: const TextStyle(
+                                              color: Color(0xFFA6A6A6),
+                                              fontSize: 13,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           StreamBuilder<Duration>(
                             stream: _player.positionStream,
                             builder: (context, snapshot) {
@@ -648,16 +671,16 @@ class _RoomScreenState extends State<RoomScreen> {
         
                               return Row(
                                 children: [
-                                  Text(format(position), style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500)),
+                                  Text(format(position), style: const TextStyle(color: Color(0xFFA6A6A6), fontSize: 12, fontWeight: FontWeight.w500)),
                                   Expanded(
                                     child: SliderTheme(
                                       data: SliderTheme.of(context).copyWith(
                                         trackHeight: 4,
                                         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
                                         overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                                        activeTrackColor: Theme.of(context).colorScheme.primary,
-                                        inactiveTrackColor: Colors.white10,
-                                        thumbColor: Colors.white,
+                                        activeTrackColor: const Color(0xFFFEFEFE),
+                                        inactiveTrackColor: const Color(0xFF282828),
+                                        thumbColor: const Color(0xFFFEFEFE),
                                       ),
                                       child: Slider(
                                         value: currentVal,
@@ -670,7 +693,7 @@ class _RoomScreenState extends State<RoomScreen> {
                                       ),
                                     ),
                                   ),
-                                  Text(format(duration), style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500)),
+                                  Text(format(duration), style: const TextStyle(color: Color(0xFFA6A6A6), fontSize: 12, fontWeight: FontWeight.w500)),
                                 ],
                               );
                             },
@@ -681,23 +704,16 @@ class _RoomScreenState extends State<RoomScreen> {
                             children: [
                               const SizedBox(width: 48), // Spacer
                               Container(
-                                decoration: BoxDecoration(
+                                decoration: const BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: Colors.white,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.white.withOpacity(0.2),
-                                      blurRadius: 20,
-                                      spreadRadius: 2,
-                                    )
-                                  ]
+                                  color: Color(0xFFFEFEFE),
                                 ),
                                 child: IconButton(
                                   iconSize: 40,
                                   padding: const EdgeInsets.all(12),
                                   icon: Icon(
                                     _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, 
-                                    color: Colors.black,
+                                    color: const Color(0xFF171717),
                                   ),
                                   onPressed: () {
                                     final newIsPlaying = !_isPlaying;
@@ -717,7 +733,7 @@ class _RoomScreenState extends State<RoomScreen> {
                                 ),
                               ),
                               IconButton(
-                                icon: const Icon(Icons.queue_music_rounded, color: Colors.white70),
+                                icon: const Icon(Icons.queue_music_rounded, color: Color(0xFFA6A6A6)),
                                 tooltip: 'Queue',
                                 onPressed: _showQueueBottomSheet,
                               ),
@@ -725,8 +741,8 @@ class _RoomScreenState extends State<RoomScreen> {
                           ),
                         ],
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 )
             ],
           ),

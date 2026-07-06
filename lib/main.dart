@@ -40,33 +40,32 @@ class MusicRoomApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF09090E),
+        scaffoldBackgroundColor: const Color(0xFF171717),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
           foregroundColor: Colors.white,
           elevation: 0,
           centerTitle: true,
         ),
-        textTheme: GoogleFonts.outfitTextTheme(Theme.of(context).textTheme).apply(
-          bodyColor: Colors.white,
-          displayColor: Colors.white,
+        textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme).apply(
+          bodyColor: const Color(0xFFDBDBDB),
+          displayColor: const Color(0xFFDBDBDB),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF00E5FF),
-            foregroundColor: Colors.black,
+            backgroundColor: const Color(0xFFFEFEFE),
+            foregroundColor: const Color(0xFF171717),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(24), // Spotify style pill buttons
             ),
-            elevation: 8,
-            shadowColor: const Color(0xFF00E5FF).withOpacity(0.4),
+            elevation: 0,
           ),
         ),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00E5FF),
-          secondary: Color(0xFFB388FF),
-          background: Color(0xFF09090E),
-          surface: Color(0xFF14141E),
+          primary: Color(0xFFFEFEFE),
+          secondary: Color(0xFFDBDBDB),
+          background: Color(0xFF171717),
+          surface: Color(0xFF282828),
         ),
       ),
       home: const HomeScreen(),
