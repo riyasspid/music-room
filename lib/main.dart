@@ -53,7 +53,7 @@ class MusicRoomApp extends StatelessWidget {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFEFEFE),
+            backgroundColor: const Color(0xFF1DB954),
             foregroundColor: const Color(0xFF171717),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24), // Spotify style pill buttons
@@ -62,7 +62,7 @@ class MusicRoomApp extends StatelessWidget {
           ),
         ),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFFEFEFE),
+          primary: Color(0xFF1DB954),
           secondary: Color(0xFFDBDBDB),
           background: Color(0xFF171717),
           surface: Color(0xFF282828),

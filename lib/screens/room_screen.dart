@@ -678,9 +678,9 @@ class _RoomScreenState extends State<RoomScreen> {
                                         trackHeight: 4,
                                         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
                                         overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                                        activeTrackColor: const Color(0xFFFEFEFE),
+                                        activeTrackColor: const Color(0xFF1DB954),
                                         inactiveTrackColor: const Color(0xFF282828),
-                                        thumbColor: const Color(0xFFFEFEFE),
+                                        thumbColor: const Color(0xFF1DB954),
                                       ),
                                       child: Slider(
                                         value: currentVal,
@@ -706,7 +706,7 @@ class _RoomScreenState extends State<RoomScreen> {
                               Container(
                                 decoration: const BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: Color(0xFFFEFEFE),
+                                  color: Color(0xFF1DB954),
                                 ),
                                 child: IconButton(
                                   iconSize: 40,
