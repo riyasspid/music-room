@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -30,6 +31,11 @@ class _RoomScreenState extends State<RoomScreen> {
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   String _searchQuery = '';
+  
+  // Queue & Autoplay
+  bool _isAutoPlay = true;
+  final List<Map<String, dynamic>> _queue = [];
+  bool _handlingCompletion = false;
 
   // Prevent recursive syncing
   bool _isSyncingFromRemote = false;
@@ -70,7 +76,7 @@ class _RoomScreenState extends State<RoomScreen> {
       }
       
       if (state.processingState == ProcessingState.completed) {
-        _updateRoomState(isPlaying: false, position: Duration.zero);
+        _handleSongCompletion();
       }
     });
 
@@ -79,6 +85,36 @@ class _RoomScreenState extends State<RoomScreen> {
       // but we could sync occasionally or when scrubbing.
       _position = pos;
     });
+  }
+
+  Future<void> _handleSongCompletion() async {
+    if (_handlingCompletion) return;
+    _handlingCompletion = true;
+    
+    try {
+      if (_queue.isNotEmpty) {
+        final nextSong = _queue.removeAt(0);
+        await _playSong(nextSong);
+        if (mounted) setState(() {});
+      } else if (_isAutoPlay && _songs.isNotEmpty && _currentSongId != null) {
+        final currentIndex = _songs.indexWhere((s) => s['id'] == _currentSongId);
+        if (currentIndex != -1 && currentIndex + 1 < _songs.length) {
+          final nextSong = _songs[currentIndex + 1];
+          await _playSong(nextSong);
+        } else {
+          await _updateRoomState(isPlaying: false, position: Duration.zero);
+        }
+      } else {
+        await _updateRoomState(isPlaying: false, position: Duration.zero);
+      }
+    } finally {
+      // Debounce completion logic
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          _handlingCompletion = false;
+        }
+      });
+    }
   }
 
   Future<void> _subscribeToRoom() async {
@@ -222,6 +258,136 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
+  void _addToQueue(Map<String, dynamic> song) {
+    setState(() {
+      _queue.add(song);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${song['title']} added to queue')),
+    );
+  }
+
+  void _showQueueBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              color: const Color(0xFF14142B).withOpacity(0.7),
+              child: StatefulBuilder(
+                builder: (context, setModalState) {
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12.0),
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.white24,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Up Next',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 1),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                '${_queue.length} songs',
+                                style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(color: Colors.white10, height: 1),
+                      Expanded(
+                        child: _queue.isEmpty
+                            ? const Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.queue_music, size: 48, color: Colors.white24),
+                                    SizedBox(height: 16),
+                                    Text(
+                                      'Queue is empty',
+                                      style: TextStyle(color: Colors.white54, fontSize: 16),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ReorderableListView.builder(
+                                padding: const EdgeInsets.all(8),
+                                itemCount: _queue.length,
+                                onReorder: (oldIndex, newIndex) {
+                                  setModalState(() {
+                                    setState(() {
+                                      if (oldIndex < newIndex) {
+                                        newIndex -= 1;
+                                      }
+                                      final item = _queue.removeAt(oldIndex);
+                                      _queue.insert(newIndex, item);
+                                    });
+                                  });
+                                },
+                                itemBuilder: (context, index) {
+                                  final song = _queue[index];
+                                  return Card(
+                                    key: ValueKey('${song['id']}_$index'),
+                                    color: Colors.white.withOpacity(0.05),
+                                    elevation: 0,
+                                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                    child: ListTile(
+                                      leading: const Icon(Icons.drag_handle, color: Colors.white38),
+                                      title: Text(
+                                        song['title'],
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                                      ),
+                                      trailing: IconButton(
+                                        icon: const Icon(Icons.close, color: Colors.white38),
+                                        onPressed: () {
+                                          setModalState(() {
+                                            setState(() {
+                                              _queue.removeAt(index);
+                                            });
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  );
+                }
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _deleteSong(Map<String, dynamic> song) async {
     try {
       // 1. Clear foreign key references in rooms table to prevent PostgreSQL errors
@@ -257,191 +423,314 @@ class _RoomScreenState extends State<RoomScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Room: ${widget.roomId}'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.copy),
-            tooltip: 'Copy Room ID',
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: widget.roomId));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Room ID copied')));
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: TextField(
-              decoration: InputDecoration(
-                hintText: 'Search songs...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                filled: true,
-                fillColor: Colors.grey.shade900,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8.0),
-                  borderSide: BorderSide.none,
+      extendBodyBehindAppBar: true,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: ClipRRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: AppBar(
+              backgroundColor: const Color(0xFF09090E).withOpacity(0.5),
+              elevation: 0,
+              title: Text('ROOM: ${widget.roomId}', style: const TextStyle(letterSpacing: 1.5, fontWeight: FontWeight.bold, fontSize: 16)),
+              centerTitle: true,
+              actions: [
+                Row(
+                  children: [
+                    const Text('AUTO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white54)),
+                    Switch(
+                      value: _isAutoPlay,
+                      onChanged: (val) {
+                        setState(() => _isAutoPlay = val);
+                      },
+                      activeColor: Theme.of(context).colorScheme.primary,
+                      inactiveTrackColor: Colors.white10,
+                    ),
+                  ],
                 ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 0),
-              ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value.toLowerCase();
-                });
-              },
+                IconButton(
+                  icon: const Icon(Icons.copy_rounded, size: 20),
+                  tooltip: 'Copy Room ID',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: widget.roomId));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Room ID copied')));
+                  },
+                ),
+                const SizedBox(width: 8),
+              ],
             ),
           ),
-          Expanded(
-            child: _isLoadingSongs
-              ? const Center(child: CircularProgressIndicator(color: Colors.white))
-              : _songs.isEmpty
-                  ? const Center(child: Text('No songs uploaded yet.'))
-                  : Builder(
-                      builder: (context) {
-                        final filteredSongs = _searchQuery.isEmpty 
-                            ? _songs 
-                            : _songs.where((s) => s['title'].toString().toLowerCase().contains(_searchQuery)).toList();
-                        
-                        if (filteredSongs.isEmpty) {
-                          return const Center(child: Text('No songs match your search.'));
-                        }
-                        
-                        return ListView.builder(
-                          itemCount: filteredSongs.length,
-                          itemBuilder: (context, index) {
-                            final song = filteredSongs[index];
-                            final isCurrent = song['id'] == _currentSongId;
-                            return ListTile(
-                              title: Text(
-                                song['title'], 
-                                maxLines: 1, 
-                                overflow: TextOverflow.ellipsis, 
-                                style: TextStyle(color: isCurrent ? Colors.grey : Colors.white)
-                              ),
-                              trailing: PopupMenuButton<String>(
-                                icon: const Icon(Icons.more_vert, color: Colors.grey),
-                                onSelected: (value) {
-                                  if (value == 'delete') {
-                                    _deleteSong(song);
-                                  }
-                                },
-                                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                                  const PopupMenuItem<String>(
-                                    value: 'delete',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.delete, color: Colors.red, size: 20),
-                                        SizedBox(width: 8),
-                                        Text('Delete', style: TextStyle(color: Colors.red)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              onTap: () {
-                                if (isCurrent) {
-                                  // Toggle play/pause
-                                  final newIsPlaying = !_isPlaying;
-                                  if (newIsPlaying) {
-                                    _player.play();
-                                  } else {
-                                    _player.pause();
-                                  }
-                                  setState(() => _isPlaying = newIsPlaying);
-                                  _updateRoomState(
-                                    isPlaying: newIsPlaying,
-                                    position: _player.position,
-                                  );
-                                } else {
-                                  _playSong(song);
-                                }
-                              },
-                            );
-                          },
-                        );
-                      }
-                    ),
+        ),
+      ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF14142B), Color(0xFF09090E)],
           ),
-          
-          // Playback controls
-          if (_currentSongId != null)
-            Container(
-              padding: const EdgeInsets.fromLTRB(16.0, 8.0, 16.0, 16.0),
-              color: Colors.grey.shade900,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  StreamBuilder<Duration>(
-                    stream: _player.positionStream,
-                    builder: (context, snapshot) {
-                      final position = snapshot.data ?? Duration.zero;
-                      final duration = _player.duration ?? Duration.zero;
-                      
-                      String format(Duration d) {
-                        final min = d.inMinutes;
-                        final sec = (d.inSeconds % 60).toString().padLeft(2, '0');
-                        return '$min:$sec';
-                      }
-                      
-                      // Fix: If duration hasn't loaded yet, maxVal should at least match the current position to prevent overflow
-                      double maxVal = math.max(duration.inSeconds.toDouble(), position.inSeconds.toDouble());
-                      if (maxVal <= 0.0) maxVal = 1.0;
-                      double currentVal = position.inSeconds.toDouble().clamp(0.0, maxVal);
-
-                      return Row(
-                        children: [
-                          Text(format(position), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                          Expanded(
-                            child: Slider(
-                              activeColor: Colors.white,
-                              inactiveColor: Colors.white24,
-                              value: currentVal,
-                              max: maxVal,
-                              onChanged: (val) {
-                                final newPos = Duration(seconds: val.toInt());
-                                _player.seek(newPos);
-                                _updateRoomState(isPlaying: _isPlaying, position: newPos);
-                              },
-                            ),
-                          ),
-                          Text(format(duration), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                        ],
-                      );
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white.withOpacity(0.05)),
+                  ),
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Search for a song...',
+                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.4)),
+                      prefixIcon: Icon(Icons.search_rounded, color: Colors.white.withOpacity(0.4)),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value.toLowerCase();
+                      });
                     },
                   ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          iconSize: 48,
-                          icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, color: Colors.white),
-                          onPressed: () {
-                            // Play/Pause locally immediately (optimistic UI update)
-                            final newIsPlaying = !_isPlaying;
-                            setState(() => _isPlaying = newIsPlaying);
+                ),
+              ),
+              Expanded(
+                child: _isLoadingSongs
+                  ? const Center(child: CircularProgressIndicator())
+                  : _songs.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.music_note_rounded, size: 64, color: Colors.white.withOpacity(0.2)),
+                              const SizedBox(height: 16),
+                              Text('No songs in the room yet.', style: TextStyle(color: Colors.white.withOpacity(0.5))),
+                            ],
+                          ),
+                        )
+                      : Builder(
+                          builder: (context) {
+                            final filteredSongs = _searchQuery.isEmpty 
+                                ? _songs 
+                                : _songs.where((s) => s['title'].toString().toLowerCase().contains(_searchQuery)).toList();
                             
-                            if (newIsPlaying) {
-                              _player.play();
-                            } else {
-                              _player.pause();
+                            if (filteredSongs.isEmpty) {
+                              return const Center(child: Text('No songs match your search.', style: TextStyle(color: Colors.white54)));
                             }
                             
-                            // Broadcast state
-                            _updateRoomState(
-                              isPlaying: newIsPlaying,
-                              position: _player.position,
+                            return ListView.builder(
+                              padding: const EdgeInsets.only(bottom: 24, top: 8),
+                              itemCount: filteredSongs.length,
+                              itemBuilder: (context, index) {
+                                final song = filteredSongs[index];
+                                final isCurrent = song['id'] == _currentSongId;
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 300),
+                                    decoration: BoxDecoration(
+                                      color: isCurrent ? Theme.of(context).colorScheme.primary.withOpacity(0.1) : Colors.white.withOpacity(0.03),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: isCurrent ? Theme.of(context).colorScheme.primary.withOpacity(0.3) : Colors.transparent,
+                                      ),
+                                    ),
+                                    child: ListTile(
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                                      leading: CircleAvatar(
+                                        backgroundColor: isCurrent ? Theme.of(context).colorScheme.primary : Colors.white10,
+                                        child: Icon(
+                                          isCurrent ? Icons.graphic_eq_rounded : Icons.music_note_rounded,
+                                          color: isCurrent ? Colors.black : Colors.white54,
+                                        ),
+                                      ),
+                                      title: Text(
+                                        song['title'], 
+                                        maxLines: 1, 
+                                        overflow: TextOverflow.ellipsis, 
+                                        style: TextStyle(
+                                          color: isCurrent ? Colors.white : Colors.white70,
+                                          fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                                        )
+                                      ),
+                                      trailing: PopupMenuButton<String>(
+                                        icon: const Icon(Icons.more_vert_rounded, color: Colors.white54),
+                                        color: const Color(0xFF14142B),
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        onSelected: (value) {
+                                          if (value == 'delete') {
+                                            _deleteSong(song);
+                                          } else if (value == 'queue') {
+                                            _addToQueue(song);
+                                          }
+                                        },
+                                        itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                                          const PopupMenuItem<String>(
+                                            value: 'queue',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.queue_music_rounded, color: Colors.white70, size: 20),
+                                                SizedBox(width: 12),
+                                                Text('Add to Queue'),
+                                              ],
+                                            ),
+                                          ),
+                                          const PopupMenuItem<String>(
+                                            value: 'delete',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.delete_rounded, color: Colors.redAccent, size: 20),
+                                                SizedBox(width: 12),
+                                                Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      onTap: () {
+                                        if (isCurrent) {
+                                          final newIsPlaying = !_isPlaying;
+                                          if (newIsPlaying) {
+                                            _player.play();
+                                          } else {
+                                            _player.pause();
+                                          }
+                                          setState(() => _isPlaying = newIsPlaying);
+                                          _updateRoomState(
+                                            isPlaying: newIsPlaying,
+                                            position: _player.position,
+                                          );
+                                        } else {
+                                          _playSong(song);
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                );
+                              },
                             );
-                          },
+                          }
                         ),
-                      ],
-                    ),
-                ],
               ),
-            )
-        ],
+              
+              // Glassmorphism Playback controls
+              if (_currentSongId != null)
+                ClipRRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 24.0),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          StreamBuilder<Duration>(
+                            stream: _player.positionStream,
+                            builder: (context, snapshot) {
+                              final position = snapshot.data ?? Duration.zero;
+                              final duration = _player.duration ?? Duration.zero;
+                              
+                              String format(Duration d) {
+                                final min = d.inMinutes;
+                                final sec = (d.inSeconds % 60).toString().padLeft(2, '0');
+                                return '$min:$sec';
+                              }
+                              
+                              double maxVal = math.max(duration.inSeconds.toDouble(), position.inSeconds.toDouble());
+                              if (maxVal <= 0.0) maxVal = 1.0;
+                              double currentVal = position.inSeconds.toDouble().clamp(0.0, maxVal);
+        
+                              return Row(
+                                children: [
+                                  Text(format(position), style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500)),
+                                  Expanded(
+                                    child: SliderTheme(
+                                      data: SliderTheme.of(context).copyWith(
+                                        trackHeight: 4,
+                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                        activeTrackColor: Theme.of(context).colorScheme.primary,
+                                        inactiveTrackColor: Colors.white10,
+                                        thumbColor: Colors.white,
+                                      ),
+                                      child: Slider(
+                                        value: currentVal,
+                                        max: maxVal,
+                                        onChanged: (val) {
+                                          final newPos = Duration(seconds: val.toInt());
+                                          _player.seek(newPos);
+                                          _updateRoomState(isPlaying: _isPlaying, position: newPos);
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                  Text(format(duration), style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500)),
+                                ],
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const SizedBox(width: 48), // Spacer
+                              Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.white.withOpacity(0.2),
+                                      blurRadius: 20,
+                                      spreadRadius: 2,
+                                    )
+                                  ]
+                                ),
+                                child: IconButton(
+                                  iconSize: 40,
+                                  padding: const EdgeInsets.all(12),
+                                  icon: Icon(
+                                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, 
+                                    color: Colors.black,
+                                  ),
+                                  onPressed: () {
+                                    final newIsPlaying = !_isPlaying;
+                                    setState(() => _isPlaying = newIsPlaying);
+                                    
+                                    if (newIsPlaying) {
+                                      _player.play();
+                                    } else {
+                                      _player.pause();
+                                    }
+                                    
+                                    _updateRoomState(
+                                      isPlaying: newIsPlaying,
+                                      position: _player.position,
+                                    );
+                                  },
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.queue_music_rounded, color: Colors.white70),
+                                tooltip: 'Queue',
+                                onPressed: _showQueueBottomSheet,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+            ],
+          ),
+        ),
       ),
     );
   }
